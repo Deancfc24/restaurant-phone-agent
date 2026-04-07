@@ -1,8 +1,7 @@
 """Routes tool calls to the appropriate reservation adapter.
 
-Provides a single entry-point (``handle_tool_call``) that the webhook server
-invokes.  The router reads the restaurant configuration to decide which adapter
-(Ontopo / Tabit) to use, then delegates the call and serialises the response.
+Refactored for multi-restaurant: adapters are created per-restaurant based on
+database configuration, rather than using a global singleton.
 """
 
 from __future__ import annotations
@@ -11,55 +10,60 @@ import json
 import logging
 from typing import Any
 
-from config import settings
 from src.adapters.base import ReservationAdapter
 from src.adapters.ontopo import OntopoAdapter
 from src.adapters.tabit import TabitAdapter
+from src.database import Restaurant
 from src.models import CustomerInfo, SpecialRequest
 
 logger = logging.getLogger(__name__)
 
-_adapter: ReservationAdapter | None = None
+# Cache adapters by restaurant id to avoid re-creating on every call
+_adapter_cache: dict[str, ReservationAdapter] = {}
 
 
-def get_adapter() -> ReservationAdapter:
-    """Lazily initialise and return the configured adapter."""
-    global _adapter
-    if _adapter is not None:
-        return _adapter
+def get_adapter_for_restaurant(restaurant: Restaurant) -> ReservationAdapter:
+    """Return (or create) the adapter for a specific restaurant."""
+    if restaurant.id in _adapter_cache:
+        return _adapter_cache[restaurant.id]
 
-    system = settings.reservation_system.lower()
+    system = restaurant.reservation_system.lower()
     if system == "ontopo":
-        _adapter = OntopoAdapter(
-            locale="he",
-            default_city=settings.restaurant_city,
-        )
+        adapter = OntopoAdapter(locale="he", default_city=restaurant.city)
     elif system == "tabit":
-        _adapter = TabitAdapter(
-            organization_id=settings.tabit_organization_id,
-            api_key=settings.tabit_api_key,
+        adapter = TabitAdapter(
+            organization_id=restaurant.tabit_organization_id,
+            api_key=restaurant.tabit_api_key,
         )
     else:
         raise ValueError(f"Unknown reservation system: {system}")
 
-    logger.info("Initialised %s adapter for restaurant '%s'", system, settings.restaurant_name)
-    return _adapter
+    _adapter_cache[restaurant.id] = adapter
+    logger.info("Created %s adapter for '%s'", system, restaurant.name)
+    return adapter
 
 
-async def shutdown_adapter() -> None:
-    global _adapter
-    if _adapter is not None:
-        await _adapter.close()
-        _adapter = None
+def invalidate_adapter(restaurant_id: str) -> None:
+    """Remove a cached adapter (call after restaurant config changes)."""
+    _adapter_cache.pop(restaurant_id, None)
 
 
-async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
-    """Dispatch a tool call and return a JSON-encoded string result.
+async def shutdown_all_adapters() -> None:
+    """Close all cached adapters (called on app shutdown)."""
+    for adapter in _adapter_cache.values():
+        await adapter.close()
+    _adapter_cache.clear()
 
-    Returns a serialised dict so Vapi can pass it to the LLM as tool output.
+
+async def handle_tool_call(
+    restaurant: Restaurant, name: str, arguments: dict[str, Any]
+) -> str:
+    """Dispatch a tool call for a specific restaurant.
+
+    Returns a JSON-encoded string result for Vapi.
     """
-    adapter = get_adapter()
-    venue_id = settings.restaurant_venue_id
+    adapter = get_adapter_for_restaurant(restaurant)
+    venue_id = restaurant.venue_id
 
     try:
         if name == "check_availability":
@@ -79,7 +83,6 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             special = None
             if sr := arguments.get("special_requests"):
                 special = SpecialRequest(**sr)
-
             result = await adapter.book_reservation(
                 venue_id=venue_id,
                 date=arguments["date"],
@@ -113,7 +116,7 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
 
         elif name == "transfer_to_human":
             reason = arguments.get("reason", "")
-            logger.info("Transfer to human requested: %s", reason)
+            logger.info("Transfer to human requested for '%s': %s", restaurant.name, reason)
             return json.dumps({
                 "transferred": True,
                 "reason": reason,
@@ -125,7 +128,7 @@ async def handle_tool_call(name: str, arguments: dict[str, Any]) -> str:
             return json.dumps({"error": f"Unknown tool: {name}"})
 
     except Exception:
-        logger.exception("Error handling tool call %s", name)
+        logger.exception("Error handling tool call %s for '%s'", name, restaurant.name)
         return json.dumps({
             "error": "שגיאת מערכת. אנא נסו שוב.",
             "tool": name,

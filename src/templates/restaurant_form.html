@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if restaurant else 'Add' }} Restaurant &mdash; Mia Dashboard{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto">
+  <div class="mb-8">
+    <a href="/" class="text-sm text-indigo-600 hover:text-indigo-700">&larr; Back to restaurants</a>
+    <h1 class="mt-2 text-2xl font-bold text-gray-900">
+      {{ 'Edit Restaurant' if restaurant else 'Add New Restaurant' }}
+    </h1>
+    <p class="mt-1 text-sm text-gray-500">
+      {% if restaurant %}
+      Update the configuration for {{ restaurant.name }}.
+      {% else %}
+      Fill in the details below. A Vapi assistant will be created automatically.
+      {% endif %}
+    </p>
+  </div>
+
+  <form method="POST"
+        action="{{ '/api/restaurants/' + restaurant.id if restaurant else '/api/restaurants' }}"
+        class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-6">
+
+    <!-- Restaurant Name -->
+    <div>
+      <label for="name" class="block text-sm font-medium text-gray-700">Restaurant Name <span class="text-red-500">*</span></label>
+      <input type="text" name="name" id="name" required
+             value="{{ restaurant.name if restaurant else '' }}"
+             placeholder="e.g. Taizu Tel Aviv"
+             class="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+    </div>
+
+    <!-- Reservation System -->
+    <div>
+      <label for="reservation_system" class="block text-sm font-medium text-gray-700">Reservation System <span class="text-red-500">*</span></label>
+      <select name="reservation_system" id="reservation_system"
+              onchange="document.getElementById('tabit-fields').style.display = this.value === 'tabit' ? 'block' : 'none'"
+              class="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+        <option value="ontopo" {{ 'selected' if not restaurant or restaurant.reservation_system == 'ontopo' else '' }}>Ontopo</option>
+        <option value="tabit" {{ 'selected' if restaurant and restaurant.reservation_system == 'tabit' else '' }}>Tabit</option>
+      </select>
+    </div>
+
+    <!-- Venue ID -->
+    <div>
+      <label for="venue_id" class="block text-sm font-medium text-gray-700">Venue ID</label>
+      <input type="text" name="venue_id" id="venue_id"
+             value="{{ restaurant.venue_id if restaurant else '' }}"
+             placeholder="Ontopo slug or Tabit org ID"
+             class="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+      <p class="mt-1 text-xs text-gray-400">The venue identifier in the reservation system</p>
+    </div>
+
+    <!-- City -->
+    <div>
+      <label for="city" class="block text-sm font-medium text-gray-700">City</label>
+      <select name="city" id="city"
+              class="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+        {% set cities = [
+          ("tel-aviv", "Tel Aviv"),
+          ("jerusalem", "Jerusalem"),
+          ("haifa", "Haifa"),
+          ("herzeliya", "Herzliya"),
+          ("raanana", "Ra'anana"),
+          ("ramatgan", "Ramat Gan"),
+          ("natanya", "Netanya"),
+          ("ashdod", "Ashdod"),
+          ("beer-sheva", "Beer Sheva"),
+          ("eilat", "Eilat"),
+          ("modiin", "Modi'in"),
+          ("rehovot", "Rehovot"),
+          ("rishon_lezion", "Rishon LeZion"),
+          ("petah_tikva", "Petah Tikva"),
+          ("holon", "Holon / Bat Yam"),
+          ("kfar_saba", "Kfar Saba"),
+          ("hod_hasharon", "Hod HaSharon"),
+          ("ramat_hasharon", "Ramat HaSharon"),
+          ("caesarya", "Caesarea"),
+          ("kineret", "Kinneret / Golan"),
+          ("the_north", "The North"),
+          ("south", "The South"),
+          ("merkaz", "Center"),
+          ("hashfela", "Shfela"),
+          ("hasharon", "Sharon"),
+        ] %}
+        {% for val, label in cities %}
+        <option value="{{ val }}" {{ 'selected' if restaurant and restaurant.city == val else ('selected' if not restaurant and val == 'tel-aviv' else '') }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- Phone Number -->
+    <div>
+      <label for="phone_number" class="block text-sm font-medium text-gray-700">Phone Number</label>
+      <input type="tel" name="phone_number" id="phone_number"
+             value="{{ restaurant.phone_number if restaurant else '' }}"
+             placeholder="+972-XX-XXX-XXXX"
+             class="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+    </div>
+
+    <!-- Vapi Phone Number ID -->
+    <div>
+      <label for="vapi_phone_number_id" class="block text-sm font-medium text-gray-700">Vapi Phone Number ID</label>
+      <input type="text" name="vapi_phone_number_id" id="vapi_phone_number_id"
+             value="{{ restaurant.vapi_phone_number_id if restaurant else '' }}"
+             placeholder="From Vapi dashboard (optional)"
+             class="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+      <p class="mt-1 text-xs text-gray-400">Import an Israeli number into Vapi first, then paste the ID here</p>
+    </div>
+
+    <!-- Tabit-specific fields (hidden unless Tabit selected) -->
+    <div id="tabit-fields" style="display: {{ 'block' if restaurant and restaurant.reservation_system == 'tabit' else 'none' }}">
+      <div class="rounded-lg border border-purple-200 bg-purple-50/50 p-4 space-y-4">
+        <p class="text-xs font-medium text-purple-700 uppercase tracking-wide">Tabit Configuration</p>
+        <div>
+          <label for="tabit_organization_id" class="block text-sm font-medium text-gray-700">Tabit Organization ID</label>
+          <input type="text" name="tabit_organization_id" id="tabit_organization_id"
+                 value="{{ restaurant.tabit_organization_id if restaurant else '' }}"
+                 class="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+        </div>
+        <div>
+          <label for="tabit_api_key" class="block text-sm font-medium text-gray-700">Tabit API Key</label>
+          <input type="password" name="tabit_api_key" id="tabit_api_key"
+                 value="{{ restaurant.tabit_api_key if restaurant else '' }}"
+                 class="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+        </div>
+      </div>
+    </div>
+
+    <!-- Submit -->
+    <div class="flex items-center justify-between pt-4 border-t border-gray-100">
+      <a href="/" class="text-sm text-gray-500 hover:text-gray-700">Cancel</a>
+      <button type="submit"
+              class="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow hover:bg-indigo-700 transition">
+        {% if restaurant %}
+        Save Changes
+        {% else %}
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+        Create Restaurant
+        {% endif %}
+      </button>
+    </div>
+
+  </form>
+</div>
+{% endblock %}

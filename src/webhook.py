@@ -1,18 +1,20 @@
 """FastAPI router for Vapi webhook events.
 
-Vapi sends POST requests to the server URL whenever the assistant invokes a
-tool during a call.  This module parses those requests and routes them through
-the reservation router.
+Multi-restaurant version: extracts the assistantId from the Vapi payload,
+looks up the restaurant in the database, and routes the tool call through
+the correct adapter.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from src.database import get_restaurant_by_assistant_id
 from src.reservation_router import handle_tool_call
 
 logger = logging.getLogger(__name__)
@@ -42,8 +44,43 @@ async def vapi_webhook(request: Request) -> JSONResponse:
     return JSONResponse(content={"ok": True})
 
 
+def _extract_assistant_id(message: dict[str, Any]) -> str | None:
+    """Extract the assistant ID from the Vapi webhook payload.
+
+    Vapi embeds it at message.call.assistantId.
+    """
+    call = message.get("call", {})
+    return call.get("assistantId")
+
+
 async def _handle_tool_calls(message: dict[str, Any]) -> JSONResponse:
     """Process one or more tool calls from Vapi and return results."""
+
+    # Identify which restaurant this call belongs to
+    assistant_id = _extract_assistant_id(message)
+    restaurant = None
+    if assistant_id:
+        restaurant = get_restaurant_by_assistant_id(assistant_id)
+
+    if not restaurant:
+        logger.warning(
+            "No restaurant found for assistantId=%s — returning error",
+            assistant_id,
+        )
+        return JSONResponse(
+            content={
+                "results": [
+                    {
+                        "name": "error",
+                        "toolCallId": "unknown",
+                        "result": json.dumps({
+                            "error": "Restaurant not configured for this assistant"
+                        }),
+                    }
+                ]
+            }
+        )
+
     tool_call_list = message.get("toolWithToolCallList", [])
     results: list[dict[str, str]] = []
 
@@ -54,9 +91,12 @@ async def _handle_tool_calls(message: dict[str, Any]) -> JSONResponse:
         fn_args = function.get("arguments", {})
         call_id = tool_call.get("id", "")
 
-        logger.info("Tool call: %s(%s) [id=%s]", fn_name, fn_args, call_id)
+        logger.info(
+            "Tool call for '%s': %s(%s) [id=%s]",
+            restaurant.name, fn_name, fn_args, call_id,
+        )
 
-        result_str = await handle_tool_call(fn_name, fn_args)
+        result_str = await handle_tool_call(restaurant, fn_name, fn_args)
 
         results.append({
             "name": fn_name,

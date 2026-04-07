@@ -2,23 +2,39 @@
 
 AI-powered phone agent for Israeli restaurants. Mia handles incoming calls in natural Hebrew, managing reservations, cancellations, and late-arrival coordination through **Vapi.ai** voice telephony with integrations for **Ontopo** and **Tabit** reservation systems.
 
+Includes a **web dashboard** for managing multiple restaurants — add a restaurant through the UI and a Vapi assistant is created automatically.
+
 ## Architecture
 
 ```
-Israeli Phone Number (Twilio)
-        │
-        ▼
-  Vapi.ai Voice Agent
-  (Deepgram STT → GPT-4o → ElevenLabs Hebrew TTS)
-        │
-        ▼  tool calls via HTTP
-  FastAPI Webhook Server (/webhook)
-        │
-        ├── Ontopo Adapter  →  ontopo.com/api
-        └── Tabit Adapter   →  reservations.tabit.cloud
+                     ┌──────────────────────────────┐
+                     │   Admin Dashboard (:8000)     │
+                     │   Add / Edit / Delete         │
+                     │   restaurants via web UI       │
+                     └──────────┬───────────────────┘
+                                │ saves to
+                                ▼
+                         SQLite Database
+                     (data/restaurants.db)
+                                │
+          ┌─────────────────────┼─────────────────────┐
+          │                     │                      │
+    Israeli Phone #1      Israeli Phone #2        Phone #N
+          │                     │                      │
+    Vapi Assistant #1     Vapi Assistant #2       Assistant #N
+    (auto-created)        (auto-created)         (auto-created)
+          │                     │                      │
+          └─────────────────────┼──────────────────────┘
+                                │ tool calls via HTTP
+                                ▼
+                     POST /webhook
+                     (identifies restaurant by assistantId)
+                                │
+                     ┌──────────┴──────────┐
+                     ▼                     ▼
+               Ontopo Adapter        Tabit Adapter
+               (ontopo.com/api)      (stub / future API)
 ```
-
-**Call flow:** A customer dials the restaurant's number → Vapi answers with Mia's greeting → the LLM drives the conversation using the Hebrew system prompt → when Mia needs to check availability, book, or cancel, the LLM invokes a tool → Vapi sends the tool call to the webhook server → the server queries Ontopo/Tabit and returns the result → Mia communicates the outcome to the customer.
 
 ## Quick Start
 
@@ -27,7 +43,6 @@ Israeli Phone Number (Twilio)
 - Python 3.12+
 - A [Vapi.ai](https://vapi.ai) account with API key
 - An [ElevenLabs](https://elevenlabs.io) account (for Hebrew TTS voice)
-- A [Twilio](https://twilio.com) account with an Israeli phone number (for production)
 
 ### 2. Install
 
@@ -37,56 +52,88 @@ cd restaurant-phone-agent
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env with your API keys and restaurant config
+# Edit .env with your Vapi + ElevenLabs API keys
 ```
 
-### 3. Start the Webhook Server
+### 3. Run
 
 ```bash
 python -m src.main
 ```
 
-The server starts on `http://0.0.0.0:8000`. For local development, expose it with ngrok:
+Open **http://localhost:8000** in your browser — the dashboard is ready.
 
-```bash
-ngrok http 8000
-```
+### 4. Add a Restaurant
 
-### 4. Create the Vapi Assistant
+1. Click **"Add Restaurant"** in the dashboard
+2. Fill in the restaurant name, reservation system (Ontopo/Tabit), venue ID, and city
+3. Click **"Create Restaurant"** — a Vapi assistant is created automatically
+4. Import an Israeli Twilio number into Vapi and assign the assistant
+5. Customers call the number — Mia answers in Hebrew
 
-```bash
-# Dry run — inspect the payload
-python -m src.vapi_assistant --dry-run --server-url https://YOUR-NGROK-URL/webhook
+## Dashboard
 
-# Create the assistant
-python -m src.vapi_assistant --server-url https://YOUR-NGROK-URL/webhook
-```
+The web dashboard is served directly by FastAPI (no npm, no build step). It uses Tailwind CSS and HTMX for a modern, responsive UI.
 
-### 5. Attach a Phone Number
-
-1. Import your Israeli Twilio number into Vapi (dashboard or API)
-2. Assign the assistant ID to that phone number
-3. Call the number — Mia answers
+**Features:**
+- View all restaurants with status indicators
+- Add new restaurants with automatic Vapi assistant provisioning
+- Edit restaurant configuration (syncs changes to Vapi)
+- Activate / deactivate restaurants
+- Delete restaurants (also removes the Vapi assistant)
+- View Vapi integration details and webhook URL
 
 ## Project Structure
 
 ```
-config.py                       # Environment-based settings (Pydantic Settings)
+config.py                       # Global settings (Vapi key, ElevenLabs, DB URL)
 src/
   main.py                       # FastAPI app with uvicorn
-  webhook.py                    # Vapi webhook handler
+  dashboard.py                  # Dashboard web UI + REST API for CRUD
+  webhook.py                    # Vapi webhook handler (multi-restaurant)
+  database.py                   # SQLAlchemy ORM (Restaurant model, SQLite)
   models.py                     # Pydantic models (Booking, Venue, etc.)
-  reservation_router.py         # Dispatches tool calls to the correct adapter
-  vapi_assistant.py             # Script to create/update the Vapi assistant
+  reservation_router.py         # Per-restaurant adapter factory + tool dispatch
+  vapi_service.py               # Vapi API client (create/update/delete assistant)
+  vapi_assistant.py             # CLI wrapper for vapi_service
   adapters/
     base.py                     # Abstract ReservationAdapter interface
-    ontopo.py                   # Ontopo API client (search, availability, booking URL)
+    ontopo.py                   # Ontopo API client (search, availability, booking)
     tabit.py                    # Tabit stub adapter (mock data, ready for real API)
   prompts/
     system_prompt.py            # Mia's Hebrew system prompt
   tools/
     definitions.py              # Vapi tool/function schemas
+  templates/
+    base.html                   # Base layout (Tailwind + HTMX)
+    restaurant_list.html        # Restaurant list page
+    restaurant_form.html        # Add/edit form
+    restaurant_detail.html      # Detail view
+data/
+  restaurants.db                # SQLite database (auto-created)
 ```
+
+## Configuration
+
+Only global settings go in `.env` — per-restaurant config lives in the database.
+
+| Variable | Description |
+|----------|-------------|
+| `VAPI_API_KEY` | Vapi dashboard API key |
+| `ELEVENLABS_API_KEY` | ElevenLabs API key |
+| `ELEVENLABS_VOICE_ID` | ElevenLabs voice ID for Hebrew TTS |
+| `SERVER_URL` | Public URL where Vapi can reach the webhook |
+| `WEBHOOK_PORT` | Server port (default: 8000) |
+| `DATABASE_URL` | SQLite path (default: `sqlite:///data/restaurants.db`) |
+
+## Multi-Restaurant Webhook Routing
+
+When a customer calls, Vapi sends tool calls to `POST /webhook` with the `assistantId` in the payload. The server:
+
+1. Extracts `assistantId` from `message.call.assistantId`
+2. Looks up the restaurant in SQLite by `vapi_assistant_id`
+3. Creates the correct adapter (Ontopo or Tabit) for that restaurant
+4. Routes the tool call and returns the result to Vapi
 
 ## Tools Available to Mia
 
@@ -99,56 +146,17 @@ src/
 | `check_restaurant_load` | Get current pressure level (green/yellow/red) |
 | `transfer_to_human` | Escalate call to a human agent |
 
-## Reservation Systems
-
-### Ontopo (fully integrated)
-
-Uses the Ontopo web API at `ontopo.com/api`:
-- Anonymous JWT authentication
-- Venue search, availability checking, booking URL generation
-- Supports all Israeli cities
-
-**Limitation:** The public API does not support placing reservations directly — it generates a booking URL. For production, consider Ontopo's partner program or browser automation.
-
-### Tabit (stub — ready for integration)
-
-Tabit has no public developer API. The adapter provides the full interface with mock data. To integrate:
-- Contact Tabit for API partnership
-- Or reverse-engineer `reservations.tabit.cloud` network requests
-- Replace the stub methods in `src/adapters/tabit.py`
-
-## Configuration
-
-All configuration is via environment variables (`.env` file). See `.env.example` for the full list.
-
-Key settings:
-
-| Variable | Description |
-|----------|-------------|
-| `VAPI_API_KEY` | Vapi dashboard API key |
-| `ELEVENLABS_VOICE_ID` | ElevenLabs voice for Hebrew TTS |
-| `RESERVATION_SYSTEM` | `ontopo` or `tabit` |
-| `RESTAURANT_NAME` | Restaurant name (used in Mia's greeting) |
-| `RESTAURANT_VENUE_ID` | Venue ID in the reservation system |
-| `RESTAURANT_CITY` | City slug for Ontopo (e.g., `tel-aviv`) |
-
 ## Docker
 
 ```bash
 docker compose up --build
 ```
 
-## API Endpoints
+The database persists in a Docker volume (`db-data`).
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/webhook` | Vapi tool-call webhook |
-| GET | `/health` | Health check |
+## Tests
 
-## Voice Platform Notes
-
-- **TTS:** ElevenLabs `eleven_multilingual_v2` with Hebrew voice. Format preprocessing is disabled (`inputPreprocessingEnabled: false`) to preserve Hebrew diacritics.
-- **STT:** Deepgram Nova-2 with Hebrew language code (`he`).
-- **LLM:** GPT-4o with temperature 0.3 for consistent, reliable responses.
-
-If Hebrew quality is insufficient, consider switching to [Yappr](https://goyappr.com) (native Israeli platform) or [Retell AI](https://retellai.com) — the backend is platform-agnostic.
+```bash
+python -m pytest tests/ -v                        # 16 pass, 2 skip
+ONTOPO_LIVE_TESTS=1 python -m pytest tests/ -v    # includes live Ontopo API
+```

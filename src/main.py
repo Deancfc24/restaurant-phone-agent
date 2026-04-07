@@ -1,16 +1,22 @@
-"""Restaurant Phone Agent — FastAPI application entry-point."""
+"""Restaurant Phone Agent — FastAPI application entry-point.
+
+Serves both the admin dashboard and the Vapi webhook.
+"""
 
 from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
 
 from config import settings
-from src.reservation_router import shutdown_adapter
+from src.database import init_db
+from src.reservation_router import shutdown_all_adapters
 from src.webhook import router as webhook_router
+from src.dashboard import router as dashboard_router
 
 
 def _configure_logging() -> None:
@@ -25,33 +31,37 @@ def _configure_logging() -> None:
 async def lifespan(app: FastAPI):
     _configure_logging()
     logger = logging.getLogger(__name__)
+
+    # Ensure the data directory exists for SQLite
+    db_path = settings.database_url.replace("sqlite:///", "")
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+
+    init_db()
+    logger.info("Database initialised at %s", settings.database_url)
     logger.info(
-        "Starting Restaurant Phone Agent for '%s' (system=%s)",
-        settings.restaurant_name,
-        settings.reservation_system,
+        "Dashboard running at http://%s:%s",
+        settings.webhook_host,
+        settings.webhook_port,
     )
     yield
-    logger.info("Shutting down — closing adapter")
-    await shutdown_adapter()
+    logger.info("Shutting down — closing adapters")
+    await shutdown_all_adapters()
 
 
 app = FastAPI(
     title="Restaurant Phone Agent",
-    description="Webhook server for Mia, the AI restaurant phone hostess",
-    version="0.1.0",
+    description="Dashboard + webhook server for Mia, the AI restaurant phone hostess",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
 app.include_router(webhook_router)
+app.include_router(dashboard_router)
 
 
 @app.get("/health")
 async def health():
-    return {
-        "status": "ok",
-        "restaurant": settings.restaurant_name,
-        "system": settings.reservation_system,
-    }
+    return {"status": "ok"}
 
 
 def main() -> None:

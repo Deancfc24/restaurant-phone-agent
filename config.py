@@ -1,34 +1,24 @@
 from __future__ import annotations
 
-from typing import Optional
-
-from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # -- Vapi --
+    # -- Vapi (global account key) --
     vapi_api_key: str = ""
-    vapi_phone_number_id: str = ""
 
-    # -- ElevenLabs --
+    # -- ElevenLabs (global) --
     elevenlabs_api_key: str = ""
     elevenlabs_voice_id: str = ""
 
-    # -- Webhook server --
+    # -- Server --
+    server_url: str = "http://localhost:8000"
     webhook_host: str = "0.0.0.0"
     webhook_port: int = 8000
     webhook_secret: str = ""
 
-    # -- Restaurant --
-    reservation_system: str = "ontopo"
-    restaurant_name: str = "My Restaurant"
-    restaurant_venue_id: str = ""
-    restaurant_city: str = "tel-aviv"
-
-    # -- Tabit --
-    tabit_organization_id: str = ""
-    tabit_api_key: str = ""
+    # -- Database --
+    database_url: str = "sqlite:///data/restaurants.db"
 
     # -- Logging --
     log_level: str = "info"
